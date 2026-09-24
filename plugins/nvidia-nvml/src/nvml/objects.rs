@@ -215,7 +215,7 @@ impl NvmlDevice for ManagedDevice {
     /// Returns a raw GPM sample handle, which can be stored between calls.
     /// See [`nvml_wrapper::Device::from_handle`]
     fn gpm_handle(&self) -> nvmlGpmSample_t {
-        unsafe { self.as_underlying_device().gpm_sample().unwrap().handle() }
+        self.as_underlying_device().gpm_sample().unwrap().into_handle()
     }
 
     /// Returns GPM metrics between two timestamps, defined by [previous_handle] and [current_handle].
@@ -228,7 +228,6 @@ impl NvmlDevice for ManagedDevice {
     ) -> Result<Vec<Result<GpmMetricResult, NvmlError>>, NvmlError> {
         let previous_sample = unsafe { GpmSample::<'_>::from_handle(&self.lib.0, previous_handle) };
         let current_sample = unsafe { GpmSample::<'_>::from_handle(&self.lib.0, current_handle) };
-
         nvml_wrapper::gpm::gpm_metrics_get(&self.lib.0, &previous_sample, &current_sample, metric_ids)
     }
 }

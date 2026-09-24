@@ -82,6 +82,7 @@ impl<P: NvmlProvider + 'static> AlumetPlugin for NvmlPlugin<P> {
                 device_name,
                 device.features
             );
+            log::info!("This is last version on branch fix gpm metrics gpu")
         }
         let source_provider = match self.config.mode {
             Mode::Full => SourceProvider::Full(FullMetrics::new(alumet, &self.config.gpm_metrics)?),
