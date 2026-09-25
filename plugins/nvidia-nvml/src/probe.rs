@@ -1,12 +1,13 @@
 use anyhow::{Context, anyhow};
 use nvml_wrapper::{
+    GpmSample,
     enum_wrappers::device::{Clock, TemperatureSensor},
     enums::{device::UsedGpuMemory, gpm::GpmMetricId},
     error::NvmlError,
     struct_wrappers::device::ProcessInfo,
 };
 use nvml_wrapper_sys::bindings::nvmlGpmSample_t;
-use std::{borrow::Cow, time::SystemTime};
+use std::{borrow::Cow, mem::ManuallyDrop, time::SystemTime};
 
 use alumet::{
     measurement::{AttributeValue::U64, MeasurementAccumulator, MeasurementPoint, Timestamp},
@@ -18,7 +19,7 @@ use alumet::{
 use crate::{
     metrics::{FullMetrics, MinimalMetrics, match_gpm_id_to_attributes},
     nvml::{
-        NvmlDevice,
+        NvmlDevice, NvmlProvider,
         features::{AvailableVersion, DetectedDevice},
     },
 };
@@ -40,7 +41,7 @@ pub struct FullSource<D: NvmlDevice> {
     resource: Resource,
 
     /// Last GPM sample handle. None if GPM is not supported.
-    previous_gpm_handle: Option<nvmlGpmSample_t>,
+    previous_gpm_sample: Option<nvmlGpmSample_t>,
     /// List of GPM metrics to monitor.
     gpm_keys: Vec<GpmMetricId>,
 
@@ -62,6 +63,14 @@ pub struct MinimalSource<D: NvmlDevice> {
 // NVML is thread-safe according to its documentation.
 unsafe impl<D: NvmlDevice> Send for FullSource<D> {}
 unsafe impl<D: NvmlDevice> Send for MinimalSource<D> {}
+
+impl<D: NvmlDevice> Drop for FullSource<D> {
+    fn drop(&mut self) {
+        if let Some(previous_handle) = self.previous_gpm_sample {
+            self.device.inner.drop_gpm_sample(previous_handle);
+        }
+    }
+}
 
 // Converts Clock types from an enum to their str equivalent.
 fn clock_type_to_str(clock_type: Clock) -> Result<&'static str, NvmlError> {
@@ -118,7 +127,7 @@ impl<D: NvmlDevice> FullSource<D> {
     pub fn new(device: DetectedDevice<D>, metrics: FullMetrics) -> Result<Self, NvmlError> {
         let bus_id = Cow::Owned(device.inner.bus_id().to_owned());
         let gpm_handle = if device.features.gpm_metrics {
-            Some(device.inner.gpm_handle())
+            Some(device.inner.create_gpm_sample())
         } else {
             None
         };
@@ -129,7 +138,7 @@ impl<D: NvmlDevice> FullSource<D> {
             metrics,
             resource: Resource::Gpu { bus_id },
             last_poll_timestamp: None,
-            previous_gpm_handle: gpm_handle,
+            previous_gpm_sample: gpm_handle,
             gpm_keys,
         })
     }
@@ -418,12 +427,12 @@ impl<D: NvmlDevice> Source for FullSource<D> {
         // Push requested GPM metrics
         if features.gpm_metrics
             && !self.gpm_keys.is_empty()
-            && let Some(previous_handle) = self.previous_gpm_handle
+            && let Some(previous_sample) = self.previous_gpm_sample
         {
-            // getting a handle to a new sample
-            let new_handle = device.gpm_handle();
-            // computing metrics between previous and current sample
-            let gpm_metrics = device.gpm_metrics_get(previous_handle, new_handle, self.gpm_keys.as_slice())?;
+            // creating a new sample
+            let new_sample = device.create_gpm_sample();
+            // Computing metrics between previous and current sample. This will not drop the samples
+            let gpm_metrics = device.gpm_metrics_get(previous_sample, new_sample, self.gpm_keys.as_slice())?;
             for gpm_metric in gpm_metrics {
                 let Ok(gpm_metric_result) = gpm_metric else { continue };
                 let gpm_id = gpm_metric_result.clone().metric_id;
@@ -446,9 +455,10 @@ impl<D: NvmlDevice> Source for FullSource<D> {
                     )
                 }
             }
-
-            // replacing previous sample handle by a new one
-            self.previous_gpm_handle = Some(device.gpm_handle());
+            // replace previous sample by the new one
+            self.previous_gpm_sample = Some(new_sample);
+            // we can now drop the previous sample
+            device.drop_gpm_sample(previous_sample);
         }
 
         Ok(())

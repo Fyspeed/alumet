@@ -82,7 +82,6 @@ impl<P: NvmlProvider + 'static> AlumetPlugin for NvmlPlugin<P> {
                 device_name,
                 device.features
             );
-            log::info!("This is last version on branch fix gpm metrics gpu")
         }
         let source_provider = match self.config.mode {
             Mode::Full => SourceProvider::Full(FullMetrics::new(alumet, &self.config.gpm_metrics)?),
@@ -444,7 +443,7 @@ mod tests {
             });
             device.expect_gpm_support().returning(|| Ok(true));
             device
-                .expect_gpm_handle()
+                .expect_create_gpm_sample()
                 .returning(|| std::ptr::null::<()>() as nvmlGpmSample_t);
             device.expect_gpm_metrics_get().returning(|_, _, _| {
                 Ok(vec![

@@ -1,7 +1,8 @@
-use std::fmt::Display;
+use std::{fmt::Display, mem::ManuallyDrop};
 
 use nvml_wrapper::{
-    enum_wrappers::device::Clock, enums::gpm::GpmMetricId, error::NvmlError, struct_wrappers::gpm::GpmMetricResult,
+    GpmSample, enum_wrappers::device::Clock, enums::gpm::GpmMetricId, error::NvmlError,
+    struct_wrappers::gpm::GpmMetricResult,
 };
 use nvml_wrapper_sys::bindings::nvmlGpmSample_t;
 
@@ -116,14 +117,17 @@ pub trait NvmlDevice: Display + Send {
 
     /// Returns a raw GPM sample handle, which can be stored between calls.
     /// See [`nvml_wrapper::Device::from_handle`]
-    fn gpm_handle(&self) -> nvmlGpmSample_t;
+    fn create_gpm_sample(&self) -> nvmlGpmSample_t;
+
+    /// Drops a sample, by wrapping it in a handle using [GpmSample::from_handle] then not returning it.
+    fn drop_gpm_sample(&self, sample: nvmlGpmSample_t);
 
     /// Returns GPM metrics between two timestamps, defined by [previous_handle] and [current_handle].
     /// The metrics requested are given by [metric_ids].
-    fn gpm_metrics_get(
+    fn gpm_metrics_get<'nvml>(
         &self,
-        previous_handle: nvmlGpmSample_t,
-        current_handle: nvmlGpmSample_t,
+        previous_sample: nvmlGpmSample_t,
+        current_sample: nvmlGpmSample_t,
         metric_ids: &[GpmMetricId],
     ) -> Result<Vec<Result<GpmMetricResult, NvmlError>>, NvmlError>;
 }
